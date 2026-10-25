@@ -28,7 +28,8 @@ body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 -apple-system,B
 .wrap{max-width:720px;margin:0 auto;padding:calc(16px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left))}
 .cal{display:flex;align-items:center;gap:12px;padding:14px;margin-top:12px;background:linear-gradient(135deg,#eef2ff,#e0e7ff);border-color:#c7d2fe}
 .cal .t{flex:1;font-size:13px;color:var(--mu)}.cal .t b{display:block;color:var(--tx);font-size:15px;margin-bottom:2px}
-.cal button{white-space:nowrap}
+.cal{flex-direction:column;align-items:stretch;gap:8px}.calbtn{display:block;text-align:center;background:var(--ac);color:#fff;font-weight:700;font-size:16px;padding:14px;border-radius:12px;text-decoration:none}
+@media(prefers-color-scheme:dark){.calbtn{color:#0b0c0f}}
 header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px}
 h1{font-size:22px;margin:0;letter-spacing:-.02em}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:22px 0 8px;font-weight:600}
@@ -117,8 +118,8 @@ input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:v
   </div>
   <div class="card est"><span>Estimare anuală</span><b id="tYear">–</b><span class="s" id="tYearS"></span></div>
   <div class="card cal">
-    <div class="t"><b>📅 Remindere sigure în Calendar</b>Adaugă toate plățile în Calendarul iPhone, cu alertă cu N zile înainte — funcționează și cu aplicația închisă.</div>
-    <button class="pri" id="icsTopBtn">Adaugă</button>
+    <a class="calbtn" id="icsTopBtn" href="abonamente.ics" target="_blank" rel="noopener">📅 Adaugă remindere în Calendar</a>
+    <div class="t" id="calHint">Se deschide Calendarul → apasă «Adaugă tot». Alertă cu 2 zile înainte de fiecare plată.</div>
   </div>
 
   <h2>🔔 Urmează</h2>
@@ -160,7 +161,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:v
       <div><label>Monedă</label><select id="fCur"><option>RON</option><option>EUR</option><option>USD</option></select></div>
       <div><label>Ciclu</label><select id="fCycle"><option value="monthly">Lunar</option><option value="yearly">Anual</option></select></div>
       <div><label>Următoarea plată</label><input id="fNext" type="date" required></div>
-      <div><label>Reminder (zile înainte)</label><input id="fRemind" type="number" min="0" max="60" value="3"></div>
+      <div><label>Reminder (zile înainte)</label><input id="fRemind" type="number" min="0" max="60" value="2"></div>
       <div><label>Categorie</label><input id="fCat" list="cats" placeholder="ex. AI"><datalist id="cats"></datalist></div>
       <div class="full"><label>Note</label><textarea id="fNotes" rows="2"></textarea></div>
       <label class="chk"><input type="checkbox" id="fActive" checked> Activ</label>
@@ -177,6 +178,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:v
 
 <script>
 (function(){
+const DEF_REMIND=2, SCHEMA=2, SKEY='abonamente.schema';
 const KEY='abonamente.v1', RKEY='abonamente.rates', NKEY='abonamente.notified';
 const store={get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
 const $=id=>document.getElementById(id);
@@ -201,19 +203,20 @@ const SEED=[
  {name:'iCloud+ 200 GB',price:14.99,cur:'RON',cycle:'monthly',next:'2026-11-25',cat:'Cloud',notes:'Apple'},
  {name:'Insta360+',price:149.99,cur:'RON',cycle:'yearly',next:'2027-04-16',cat:'Foto/Video',notes:'Apple'},
  {name:'Moonly',price:79.99,cur:'RON',cycle:'yearly',next:'2027-06-21',cat:'Lifestyle',notes:'Apple · eticheta zice grup lunar, dar data reînnoirii sugerează anual'},
- {name:'ShutEye Special Offer',price:0,cur:'RON',cycle:'monthly',next:'2026-11-16',cat:'Sănătate',notes:'Apple · expiră 16 nov 2026, fără preț afișat',expiring:true,remind:5}
+ {name:'ShutEye Special Offer',price:0,cur:'RON',cycle:'monthly',next:'2026-11-16',cat:'Sănătate',notes:'Apple · expiră 16 nov 2026, fără preț afișat',expiring:true}
 ].map(s=>norm(s));
 
 function norm(s){
   const o={id:s.id||uid(),name:String(s.name||'Fără nume'),price:Math.max(0,+s.price||0),cur:['RON','EUR','USD'].includes(s.cur)?s.cur:'RON',
     cycle:s.cycle==='yearly'?'yearly':'monthly',next:/^\d{4}-\d{2}-\d{2}$/.test(s.next)?s.next:iso(todayD()),cat:s.cat||'',notes:s.notes||'',
-    active:s.active!==false,remind:Number.isFinite(+s.remind)&&s.remind!==''&&s.remind!=null?Math.max(0,+s.remind):3,variable:!!s.variable,expiring:!!s.expiring};
+    active:s.active!==false,remind:Number.isFinite(+s.remind)&&s.remind!==''&&s.remind!=null?Math.max(0,+s.remind):DEF_REMIND,variable:!!s.variable,expiring:!!s.expiring};
   o.anchor=+s.anchor||parse(o.next).getDate();
   return o;
 }
 
 let subs=(store.get(KEY)||null);
 subs=Array.isArray(subs)?subs.map(norm):SEED;
+if((+store.get(SKEY)||1)<SCHEMA){subs.forEach(s=>s.remind=DEF_REMIND);store.set(KEY,subs);store.set(SKEY,SCHEMA)}
 let rates=Object.assign({EUR:5.3373,USD:4.7714},store.get(RKEY)||{});
 const DKEY='abonamente.disp';
 let disp=['RON','EUR','USD'].includes(store.get(DKEY))?store.get(DKEY):'RON', editing=null;
@@ -289,6 +292,7 @@ function render(){
   const other=subs.filter(s=>!s.active||s.expiring).sort((a,b)=>(b.active-a.active)||byDate(a,b));
   list('otherList',other,null,'');
   $('otherH').style.display=$('otherList').style.display=other.length?'':'none';
+  calHint();
   $('cats').innerHTML=[...new Set(subs.map(s=>s.cat).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('');
 }
 
@@ -301,7 +305,7 @@ function openForm(s){
   editing=s||null;
   $('fTitle').textContent=s?'Editează':'Abonament nou';
   $('fName').value=s?s.name:'';$('fPrice').value=s?s.price:'';$('fCur').value=s?s.cur:'RON';
-  $('fCycle').value=s?s.cycle:'monthly';$('fNext').value=s?s.next:iso(todayD());$('fRemind').value=s?s.remind:3;
+  $('fCycle').value=s?s.cycle:'monthly';$('fNext').value=s?s.next:iso(todayD());$('fRemind').value=s?s.remind:DEF_REMIND;
   $('fCat').value=s?s.cat:'';$('fNotes').value=s?s.notes:'';$('fActive').checked=s?s.active:true;
   $('fVar').checked=s?s.variable:false;$('fExp').checked=s?s.expiring:false;
   $('fDel').style.visibility=s?'visible':'hidden';$('fIcs').style.visibility=s?'visible':'hidden';
@@ -315,7 +319,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeForm()});
 $('form').onsubmit=e=>{
   e.preventDefault();
   const data={name:$('fName').value.trim(),price:$('fPrice').value,cur:$('fCur').value,cycle:$('fCycle').value,next:$('fNext').value,
-    remind:$('fRemind').value===''?3:$('fRemind').value,cat:$('fCat').value.trim(),notes:$('fNotes').value.trim(),active:$('fActive').checked,variable:$('fVar').checked,expiring:$('fExp').checked};
+    remind:$('fRemind').value===''?DEF_REMIND:$('fRemind').value,cat:$('fCat').value.trim(),notes:$('fNotes').value.trim(),active:$('fActive').checked,variable:$('fVar').checked,expiring:$('fExp').checked};
   if(!data.name)return;
   if(editing){const anchorChanged=data.next!==editing.next;Object.assign(editing,norm({...editing,...data,anchor:anchorChanged?0:editing.anchor}))}
   else subs.push(norm(data));
@@ -339,22 +343,36 @@ $('impFile').onchange=async e=>{
     autoAdvance();save();render();toast('Importat '+subs.length);
   }catch(err){toast('Fișier JSON invalid')}finally{e.target.value=''}
 };
-$('icsTopBtn').onclick=$('icsAllBtn').onclick=()=>{const a=subs.filter(s=>s.active);if(a.length)download('abonamente.ics',ics(a),'text/calendar')};
+const activeSubs=()=>subs.filter(s=>s.active);
+$('icsAllBtn').onclick=()=>{const a=activeSubs();if(a.length)download('abonamente.ics',ics(a),'text/calendar')};
+// Static file on the server (reliable on iOS, incl. home-screen mode). Used when it matches local data; else generated file.
+let staticFP=null;
+$('icsTopBtn').addEventListener('click',e=>{
+  const a=activeSubs();if(!a.length){e.preventDefault();return}
+  if(staticFP&&staticFP===fp(a))return; // let the link open the static https .ics
+  e.preventDefault();download('abonamente.ics',ics(a),'text/calendar');
+});
+function calHint(){
+  const r=[...new Set(activeSubs().map(s=>s.remind))];
+  $('calHint').textContent='Se deschide Calendarul → apasă «Adaugă tot». Alertă '+(r.length===1?'cu '+r[0]+(r[0]===1?' zi':' zile')+' înainte':'cu zilele setate la fiecare abonament')+'.';
+}
+try{fetch('abonamente.ics',{cache:'no-store'}).then(r=>r.ok?r.text():'').then(t=>{const m=t.match(/X-ABONAMENTE-FP:(\w+)/);staticFP=m?m[1]:null;console.log('static ics fp',staticFP,'local',fp(activeSubs()))}).catch(()=>{})}catch(e){}
 
 // ICS
 const slug=s=>s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'abonament';
+function fp(list){const s=list.map(x=>[x.name,x.price,x.cur,x.cycle,x.anchor,x.cycle==='yearly'?x.next.slice(5,7):'',x.remind,x.expiring?x.next:''].join('|')).sort().join('#');let h=5381;for(let i=0;i<s.length;i++)h=((h*33)^s.charCodeAt(i))>>>0;return h.toString(36)}
 const icsEsc=s=>String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
 function ics(list){
   const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
-  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Mihai//Abonamente//RO','CALSCALE:GREGORIAN'];
+  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Mihai//Abonamente//RO','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:Abonamente','X-ABONAMENTE-FP:'+fp(list)];
   list.forEach(s=>{
     const d=s.next.replace(/-/g,''),end=addDay(s.next).replace(/-/g,'');
     const price=s.variable&&!s.price?'preț variabil':fmt(s.price,s.cur);
-    L.push('BEGIN:VEVENT','UID:'+s.id+'@abonamente','DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+d,'DTEND;VALUE=DATE:'+end,
+    L.push('BEGIN:VEVENT','UID:'+slug(s.name)+'-'+s.cycle+'@abonamente','DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+d,'DTEND;VALUE=DATE:'+end,
       'SUMMARY:'+icsEsc((s.expiring?'Expiră: ':'Plată: ')+s.name+' ('+price+')'),
       'DESCRIPTION:'+icsEsc((s.notes||'')+(s.cat?'\nCategorie: '+s.cat:'')));
     if(!s.expiring)L.push('RRULE:FREQ='+(s.cycle==='yearly'?'YEARLY':'MONTHLY')+(s.cycle==='monthly'&&s.anchor===31?';BYMONTHDAY=-1':''));
-    L.push('BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(s.name+' – '+(s.expiring?'expiră':'plată')+' în '+s.remind+' zile'),
+    L.push('BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(s.name+' – '+(s.expiring?'expiră':'plată')+(s.remind===0?' azi':' peste '+s.remind+(s.remind===1?' zi':' zile'))),
       'TRIGGER:'+(s.remind>0?'-P'+(s.remind-1)+'DT15H':'PT9H'),'END:VALARM','END:VEVENT');
   });
   L.push('END:VCALENDAR');return L.join('\r\n');
