@@ -20,7 +20,7 @@
 .due{border-color:#78350f!important}.due .row{border-color:#4a2a08!important}.b-due{background:#451a03!important}
 .b-exp,.b-pause{background:#262a31!important;color:#d1d5db!important}.chip.on{background:#f3f4f6!important;color:#111!important}
 .sheet{background:var(--card)!important}input,select,textarea{background:#0f1115!important}.row.click:active{background:#1f2229!important}
-button.pri{color:#0b0c0f!important}.cal{background:linear-gradient(135deg,#312e81,#1e1b4b)!important;border-color:#3730a3!important}}
+button.pri,.seg button.on{color:#0b0c0f!important}.cal{background:linear-gradient(135deg,#312e81,#1e1b4b)!important;border-color:#3730a3!important}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
 input,select,textarea{font-size:16px!important}
@@ -43,8 +43,12 @@ button.dan{color:var(--da);border-color:#fecaca}
 .tot .l{font-size:12px;color:var(--mu)}
 .tot .v{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-top:2px}
 .tot .s{font-size:12px;color:var(--mu);margin-top:4px}
-.breakdown{padding:10px 14px;margin-top:10px;font-size:13px;color:var(--mu);display:flex;flex-wrap:wrap;gap:6px 16px}
-.breakdown b{color:var(--tx);font-weight:600}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px;background:var(--card);border:1px solid var(--bd);border-radius:12px;margin-bottom:12px}
+.seg button{border:0;border-radius:9px;padding:9px 0;font-weight:600;background:transparent;color:var(--mu)}
+.seg button.on{background:var(--ac);color:#fff}
+.est{padding:10px 14px;margin-top:10px;font-size:13px;color:var(--mu);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.est b{color:var(--tx);font-size:15px}
+.b-paid{background:var(--oks);color:var(--ok)}
 .due{border-color:#fdba74;background:var(--was)}
 .due .row{border-color:#fed7aa}
 .empty{padding:14px;color:var(--mu);font-size:14px}
@@ -104,11 +108,14 @@ input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:v
     <button class="sm pri" id="notifBtn">Activează</button>
   </div>
 
-  <div class="totals">
-    <div class="card tot"><div class="l">Total lunar estimat</div><div class="v" id="tMonth">–</div><div class="s" id="tMonthS"></div></div>
-    <div class="card tot"><div class="l">Total anual estimat</div><div class="v" id="tYear">–</div><div class="s" id="tYearS"></div></div>
+  <div class="seg" id="dispSeg" role="tablist" aria-label="Monedă afișare">
+    <button data-disp="RON">RON</button><button data-disp="EUR">EUR</button><button data-disp="USD">USD</button>
   </div>
-  <div class="card breakdown" id="breakdown"></div>
+  <div class="totals">
+    <div class="card tot"><div class="l">Plătești luna viitoare</div><div class="v" id="tMonth">–</div><div class="s" id="tMonthS"></div></div>
+    <div class="card tot"><div class="l">Prepaid · plătite</div><div class="v" id="tPre">–</div><div class="s" id="tPreS"></div></div>
+  </div>
+  <div class="card est"><span>Estimare anuală</span><b id="tYear">–</b><span class="s" id="tYearS"></span></div>
   <div class="card cal">
     <div class="t"><b>📅 Remindere sigure în Calendar</b>Adaugă toate plățile în Calendarul iPhone, cu alertă cu N zile înainte — funcționează și cu aplicația închisă.</div>
     <button class="pri" id="icsTopBtn">Adaugă</button>
@@ -117,12 +124,14 @@ input:focus,select:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:v
   <h2>🔔 Urmează</h2>
   <div class="card due" id="dueList"></div>
 
-  <h2>Următoarele 30 de zile</h2>
-  <div class="card" id="soonList"></div>
+  <h2>Lunare · plătești luna viitoare</h2>
+  <div class="card" id="monthList"></div>
 
-  <h2>Toate abonamentele</h2>
-  <div class="chips" id="filters"></div>
-  <div class="card" id="allList"></div>
+  <h2>Anuale · prepaid</h2>
+  <div class="card" id="yearList"></div>
+
+  <h2 id="otherH">Expiră / pauză</h2>
+  <div class="card" id="otherList"></div>
 
   <h2 id="settings">Setări</h2>
   <div class="card">
@@ -206,7 +215,8 @@ function norm(s){
 let subs=(store.get(KEY)||null);
 subs=Array.isArray(subs)?subs.map(norm):SEED;
 let rates=Object.assign({EUR:5.3373,USD:4.7714},store.get(RKEY)||{});
-let filter='all', editing=null;
+const DKEY='abonamente.disp';
+let disp=['RON','EUR','USD'].includes(store.get(DKEY))?store.get(DKEY):'RON', editing=null;
 
 function addCycle(s,cycle,anchor){
   const d=parse(s);let y=d.getFullYear(),m=d.getMonth();
@@ -234,47 +244,57 @@ function whenTxt(s){
   if(d===0)return verb+' azi';if(d===1)return verb+' mâine';
   return verb+' '+fmtDate(s.next)+' · în '+d+' zile';
 }
-function rowHTML(s,opts={}){
+// display currency
+const conv=(v,from)=>{const r=toRON(v,from);return disp==='RON'?r:r/(+rates[disp]||1)};
+const D=(v,from)=>fmt(conv(v,from),disp);
+const isMonthly=s=>s.active&&!s.expiring&&s.cycle==='monthly';
+const isYearly=s=>s.active&&!s.expiring&&s.cycle==='yearly';
+function rowHTML(s,mode){
   const d=daysUntil(s.next);let b='';
   if(!s.active)b+='<span class="badge b-pause">pauză</span>';
   else if(d===0)b+='<span class="badge b-today">azi</span>';
   else if(isDue(s))b+='<span class="badge b-due">în '+d+' z</span>';
+  if(mode==='paid')b+='<span class="badge b-paid">Plătit</span>';
   if(s.variable)b+='<span class="badge b-var">variabil</span>';
   if(s.expiring)b+='<span class="badge b-exp">expiră</span>';
-  const cyc=s.expiring?'—':s.cycle==='yearly'?'/an':'/lună';
-  const sub=s.cur!=='RON'&&s.price?'≈ '+fmt(toRON(s.price,s.cur),'RON'):(s.cycle==='yearly'&&s.price?'≈ '+fmt(toRON(s.price/12,s.cur),'RON')+'/lună':'');
+  const cyc=s.expiring?'':s.cycle==='yearly'?'/an':'/lună';
+  let main,sec='';
+  if(s.variable&&!s.price)main='variabil';
+  else if(s.expiring&&!s.price)main='fără preț';
+  else{main=(s.cur!==disp?'≈ ':'')+D(s.price,s.cur);sec=(s.cur!==disp?fmt(s.price,s.cur)+' ':'')+cyc}
+  const meta=mode==='paid'?'valabil până la '+fmtDate(s.next)+(d<=60?' · reînnoire în '+d+' zile':''):whenTxt(s);
   return `<div class="row click ${s.active?'':'paused'}" data-id="${s.id}">
     <div class="dot" style="background:${color(s.name)}">${esc(s.name.trim()[0]||'?').toUpperCase()}</div>
-    <div class="main"><div class="nm">${esc(s.name)}${b}</div><div class="meta">${esc(whenTxt(s))}${s.cat?' · '+esc(s.cat):''}</div></div>
-    <div class="pr"><div class="a">${s.variable&&!s.price?'variabil':s.expiring&&!s.price?'fără preț':fmt(s.price,s.cur)}</div><div class="c">${s.expiring?'':cyc}${sub?' '+sub:''}</div></div>
+    <div class="main"><div class="nm">${esc(s.name)}${b}</div><div class="meta">${esc(meta)}${s.cat?' · '+esc(s.cat):''}</div></div>
+    <div class="pr"><div class="a">${main}</div><div class="c">${esc(sec)}</div></div>
   </div>`;
 }
 const byDate=(a,b)=>a.next.localeCompare(b.next)||a.name.localeCompare(b.name);
+const list=(id,arr,mode,empty)=>{$(id).innerHTML=arr.length?arr.map(s=>rowHTML(s,mode)).join(''):'<div class="empty">'+empty+'</div>'};
 
 function render(){
-  // totals
-  let m=0;const per={RON:0,EUR:0,USD:0};let n=0,varN=0;
-  subs.filter(counts).forEach(s=>{const mm=monthlyOf(s);per[s.cur]+=mm;m+=toRON(mm,s.cur);n++;if(s.variable)varN++});
-  $('tMonth').textContent=fmt(m,'RON');$('tYear').textContent=fmt(m*12,'RON');
-  $('tMonthS').textContent=n+' active'+(varN?' · '+varN+' variabil(e) exclus(e) la 0':'');
-  $('tYearS').textContent='anualele împărțite la 12 pt. lunar';
-  $('breakdown').innerHTML=['RON','EUR','USD'].filter(c=>per[c]).map(c=>`<span>${c}: <b>${fmt(per[c],c)}</b>/lună · ${fmt(per[c]*12,c)}/an</span>`).join('')||'<span>Niciun abonament activ.</span>';
-  // due
-  const due=subs.filter(isDue).sort(byDate);
-  $('dueList').innerHTML=due.length?due.map(s=>rowHTML(s)).join(''):'<div class="empty">Nicio plată în fereastra de reminder. 🎉</div>';
-  const soon=subs.filter(s=>s.active&&!isDue(s)&&daysUntil(s.next)>=0&&daysUntil(s.next)<=30).sort(byDate);
-  $('soonList').innerHTML=soon.length?soon.map(s=>rowHTML(s)).join(''):'<div class="empty">Nimic altceva în următoarele 30 de zile.</div>';
-  // filters
-  const F=[['all','Toate'],['active','Active'],['paused','Pauză']];
-  $('filters').innerHTML=F.map(([k,l])=>`<button class="chip ${filter===k?'on':''}" data-f="${k}">${l} (${k==='all'?subs.length:subs.filter(s=>k==='active'?s.active:!s.active).length})</button>`).join('');
-  const list=subs.filter(s=>filter==='all'||(filter==='active'?s.active:!s.active)).sort((a,b)=>(b.active-a.active)||byDate(a,b));
-  $('allList').innerHTML=list.length?list.map(s=>rowHTML(s)).join(''):'<div class="empty">Niciun abonament aici.</div>';
+  document.querySelectorAll('[data-disp]').forEach(b=>b.classList.toggle('on',b.dataset.disp===disp));
+  const mon=subs.filter(isMonthly).sort(byDate), yr=subs.filter(isYearly).sort(byDate);
+  const mSum=mon.reduce((a,s)=>a+conv(s.price,s.cur),0), ySum=yr.reduce((a,s)=>a+conv(s.price,s.cur),0);
+  const varN=mon.filter(s=>s.variable&&!s.price).length;
+  $('tMonth').textContent=fmt(mSum,disp);
+  $('tMonthS').textContent=mon.length+' lunare'+(varN?' · + '+varN+' variabil':'');
+  $('tPre').textContent=fmt(ySum,disp);
+  $('tPreS').textContent=yr.length+' anuale, deja plătite';
+  $('tYear').textContent=fmt(mSum*12+ySum,disp);
+  $('tYearS').textContent='= lunare × 12 + anuale';
+  list('dueList',subs.filter(isDue).sort(byDate),null,'Nicio plată în fereastra de reminder. 🎉');
+  list('monthList',mon,null,'Niciun abonament lunar activ.');
+  list('yearList',yr,'paid','Niciun abonament anual activ.');
+  const other=subs.filter(s=>!s.active||s.expiring).sort((a,b)=>(b.active-a.active)||byDate(a,b));
+  list('otherList',other,null,'');
+  $('otherH').style.display=$('otherList').style.display=other.length?'':'none';
   $('cats').innerHTML=[...new Set(subs.map(s=>s.cat).filter(Boolean))].map(c=>`<option value="${esc(c)}">`).join('');
 }
 
 // interactions
 document.addEventListener('click',e=>{
-  const f=e.target.closest('[data-f]');if(f){filter=f.dataset.f;render();return}
+  const dc=e.target.closest('[data-disp]');if(dc){disp=dc.dataset.disp;store.set(DKEY,disp);render();return}
   const r=e.target.closest('.row[data-id]');if(r)openForm(subs.find(s=>s.id===r.dataset.id));
 });
 function openForm(s){
